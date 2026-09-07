@@ -1,40 +1,44 @@
 package com.evilfly.client;
 
-import net.fabricmc.api.ClientModInitializer;
-import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.network.ClientPlayerEntity;
-import net.minecraft.entity.Entity;
-import net.minecraft.entity.mob.HostileEntity;
-import net.minecraft.entity.player.PlayerEntity;
-import net.minecraft.util.math.BlockPos;
-import net.minecraft.block.BlockState;
+import com.evilfly.MinecraftForFlies;
+import com.evilfly.fly.DrosophilaEntity;
 
-import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpHandler;
+import net.fabricmc.api.ClientModInitializer;
+
 import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.phys.AABB;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.UUID;
 
 public class MinecraftForFliesClient implements ClientModInitializer {
-    private static HttpServer server;
-    public static volatile float targetForward = 0f;
-    public static volatile float targetStrafing = 0f;
-    public static volatile boolean targetJumping = false;
-    public static volatile boolean targetAttacking = false;
-    public static volatile float targetYawDelta = 0f;
-    public static volatile float targetPitchDelta = 0f;
-    public static volatile String lastThoughts = "Drosophila melanogaster ativa no substrato.";
-
-    private static int flightAttemptCounter = 0;
-    private static boolean flightAttemptDetected = false;
+    private HttpServer server;
 
     @Override
     public void onInitializeClient() {
+        // Renderer da Drosophila (precisa vir antes do servidor HTTP para visual)
+        net.fabricmc.fabric.api.client.rendering.v1.EntityModelLayerRegistry.registerModelLayer(
+                FlyRenderer.LAYER, FlyRenderer::createBodyLayer);
+        net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(
+                MinecraftForFlies.DROSOPHILA, FlyRenderer::new);
+
         System.out.println("[DrosophilaBrain] Inicializando interface biológica e servidor HTTP (porta 8080)...");
         try {
             server = HttpServer.create(new InetSocketAddress(8080), 0);
@@ -46,69 +50,45 @@ public class MinecraftForFliesClient implements ClientModInitializer {
         } catch (IOException e) {
             e.printStackTrace();
         }
+    }
 
-        ClientTickEvents.END_CLIENT_TICK.register(client -> {
-            ClientPlayerEntity player = client.player;
-            if (player == null || client.world == null) return;
-
-            // Apply walking movement (Drosophila walks on legs, does not fly)
-            player.input.movementForward = targetForward;
-            player.input.movementSideways = targetStrafing;
-            player.input.jumping = false; // Prevent natural jumping / flying
-
-            // Detect flight / take-off attempts (when jump is requested while airborne or attempting lift-off)
-            if (targetJumping && !player.isOnGround()) {
-                flightAttemptCounter++;
-                if (flightAttemptCounter > 10) {
-                    flightAttemptDetected = true; // Signals converter.py to inject neural noise punishment
-                    flightAttemptCounter = 0;
-                }
-            } else {
-                flightAttemptDetected = false;
-                if (targetJumping) {
-                    // Small ground hop allowed, but sustained lift-off is flagged
-                    flightAttemptCounter++;
-                    if (flightAttemptCounter > 15) {
-                        flightAttemptDetected = true;
-                    }
-                } else {
-                    flightAttemptCounter = Math.max(0, flightAttemptCounter - 1);
-                }
+    // Retorna a mosca ativa no mundo do client, pelo UUID compartilhado.
+    private static DrosophilaEntity activeFly(Minecraft client) {
+        if (client.level == null) return null;
+        UUID uuid = MinecraftForFlies.activeFlyUuid;
+        if (uuid != null) {
+            for (DrosophilaEntity fly : client.level.getEntitiesOfClass(DrosophilaEntity.class,
+                    new AABB(-3e7, -3e7, -3e7, 3e7, 3e7, 3e7))) {
+                if (fly.getUUID().equals(uuid)) return fly;
             }
-
-            if (targetYawDelta != 0f) {
-                player.setYaw(player.getYaw() + targetYawDelta);
-                targetYawDelta = 0f;
-            }
-            if (targetPitchDelta != 0f) {
-                float newPitch = Math.max(-90f, Math.min(90f, player.getPitch() + targetPitchDelta));
-                player.setPitch(newPitch);
-                targetPitchDelta = 0f;
-            }
-        });
+        }
+        List<DrosophilaEntity> flies = client.level.getEntitiesOfClass(DrosophilaEntity.class,
+                new AABB(-3e7, -3e7, -3e7, 3e7, 3e7, 3e7));
+        return flies.isEmpty() ? null : flies.get(0);
     }
 
     static class StateHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            MinecraftClient client = MinecraftClient.getInstance();
+            Minecraft client = Minecraft.getInstance();
+            DrosophilaEntity fly = activeFly(client);
             String json = "{}";
-            if (client.player != null && client.world != null) {
-                ClientPlayerEntity p = client.player;
-                double x = p.getX();
-                double y = p.getY();
-                double z = p.getZ();
-                float health = p.getHealth();
-                boolean hurt = p.hurtTime > 0;
+            if (fly != null) {
+                double x = fly.getX();
+                double y = fly.getY();
+                double z = fly.getZ();
+                float health = fly.getHealth();
+                boolean hurt = fly.hurtTime > 0;
+                boolean flightAttempt = MinecraftForFlies.targetJumping && !fly.onGround();
 
-                // Direct data teaching the fly what blocks are what (3x3x3 local sensory grid)
+                // Grade sensorial 3x3x3 ensinando a mosca o que cada bloco é
                 List<Map<String, String>> blockSensoryData = new ArrayList<>();
-                BlockPos pos = p.getBlockPos();
+                BlockPos pos = fly.blockPosition();
                 for (int dx = -1; dx <= 1; dx++) {
                     for (int dy = -1; dy <= 1; dy++) {
                         for (int dz = -1; dz <= 1; dz++) {
-                            BlockPos bp = pos.add(dx, dy, dz);
-                            BlockState state = client.world.getBlockState(bp);
+                            BlockPos bp = pos.offset(dx, dy, dz);
+                            BlockState state = client.level.getBlockState(bp);
                             Map<String, String> bInfo = new HashMap<>();
                             bInfo.put("x", String.valueOf(bp.getX()));
                             bInfo.put("y", String.valueOf(bp.getY()));
@@ -120,23 +100,23 @@ public class MinecraftForFliesClient implements ClientModInitializer {
                     }
                 }
 
-                // Entity recognition: Hostile mobs = threats, Real players = friendly
+                // Reconhecimento de entidades: mobs hostis = ameaças, players = amigos
                 List<String> threats = new ArrayList<>();
                 List<String> friends = new ArrayList<>();
-                for (Entity e : client.world.getEntitiesByClass(Entity.class, p.getBoundingBox().expand(12.0), entity -> entity != p)) {
-                    if (e instanceof HostileEntity) {
+                for (Entity e : client.level.getEntitiesOfClass(Entity.class,
+                        fly.getBoundingBox().inflate(12.0), entity -> entity != fly)) {
+                    if (e instanceof Monster) {
                         threats.add(e.getName().getString());
-                    } else if (e instanceof PlayerEntity) {
+                    } else if (e instanceof Player) {
                         friends.add(e.getName().getString());
                     }
                 }
 
                 json = String.format(Locale.ROOT,
-                    "{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"health\":%.1f,\"hurt\":%b,\"flight_attempt\":%b,\"blocks\":%s,\"threats\":%s,\"friends\":%s,\"thoughts\":\"%s\"}",
-                    x, y, z, health, hurt, flightAttemptDetected,
-                    blocksToJson(blockSensoryData), listToJson(threats), listToJson(friends),
-                    lastThoughts.replace("\"", "\\\"").replace("\n", " ")
-                );
+                        "{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"health\":%.1f,\"hurt\":%b,\"flight_attempt\":%b,\"blocks\":%s,\"threats\":%s,\"friends\":%s,\"thoughts\":\"%s\"}",
+                        x, y, z, health, hurt, flightAttempt,
+                        blocksToJson(blockSensoryData), listToJson(threats), listToJson(friends),
+                        MinecraftForFlies.lastThoughts.replace("\"", "\\\"").replace("\n", " "));
             }
 
             byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
@@ -152,7 +132,7 @@ public class MinecraftForFliesClient implements ClientModInitializer {
             for (int i = 0; i < blocks.size(); i++) {
                 Map<String, String> b = blocks.get(i);
                 sb.append(String.format("{\"x\":\"%s\",\"y\":\"%s\",\"z\":\"%s\",\"name\":\"%s\",\"solid\":\"%s\"}",
-                    b.get("x"), b.get("y"), b.get("z"), b.get("name"), b.get("solid")));
+                        b.get("x"), b.get("y"), b.get("z"), b.get("name"), b.get("solid")));
                 if (i < blocks.size() - 1) sb.append(",");
             }
             sb.append("]");
@@ -175,19 +155,19 @@ public class MinecraftForFliesClient implements ClientModInitializer {
         public void handle(HttpExchange exchange) throws IOException {
             if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-                targetForward = parseJsonFloat(body, "forward", targetForward);
-                targetStrafing = parseJsonFloat(body, "strafe", targetStrafing);
-                targetJumping = parseJsonBool(body, "jump", targetJumping);
-                targetAttacking = parseJsonBool(body, "attack", false);
-                targetYawDelta = parseJsonFloat(body, "yaw_delta", 0f);
-                targetPitchDelta = parseJsonFloat(body, "pitch_delta", 0f);
+                MinecraftForFlies.targetForward = parseJsonFloat(body, "forward", MinecraftForFlies.targetForward);
+                MinecraftForFlies.targetStrafing = parseJsonFloat(body, "strafe", MinecraftForFlies.targetStrafing);
+                MinecraftForFlies.targetJumping = parseJsonBool(body, "jump", MinecraftForFlies.targetJumping);
+                MinecraftForFlies.targetAttacking = parseJsonBool(body, "attack", false);
+                MinecraftForFlies.targetYawDelta = parseJsonFloat(body, "yaw_delta", 0f);
+                MinecraftForFlies.targetPitchDelta = parseJsonFloat(body, "pitch_delta", 0f);
                 if (body.contains("\"thoughts\"")) {
                     int idx = body.indexOf("\"thoughts\":\"");
                     if (idx != -1) {
                         int start = idx + 12;
                         int end = body.indexOf("\"", start);
                         if (end != -1) {
-                            lastThoughts = body.substring(start, end);
+                            MinecraftForFlies.lastThoughts = body.substring(start, end);
                         }
                     }
                 }
