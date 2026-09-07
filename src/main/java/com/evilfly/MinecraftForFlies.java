@@ -49,7 +49,9 @@ public class MinecraftForFlies implements ModInitializer {
 	public static final EntityType<DrosophilaEntity> DROSOPHILA = Registry.register(
 			BuiltInRegistries.ENTITY_TYPE, id("drosophila"),
 			EntityType.Builder.of(DrosophilaEntity::new, MobCategory.CREATURE)
-					.sized(0.4F, 0.4F)
+					.sized(0.6F, 1.8F)  // mesmas dimensões de um player
+					.clientTrackingRange(10)
+					.updateInterval(3)
 					.build("drosophila"));
 
 	@Override
@@ -87,8 +89,9 @@ public class MinecraftForFlies implements ModInitializer {
 		found.setHealth(found.getMaxHealth());
 		if (level.addFreshEntity(found)) {
 			activeFlyUuid = found.getUUID();
+			LOGGER.info("[Drosophila] spawnada UUID={} em {} no level {}", activeFlyUuid, posToString(pos), level.dimension().location());
 			source.sendSuccess(() -> Component.literal(
-					"Drosophila spawnada em " + posToString(pos) + " (persistente)."), true);
+					"Drosophila spawnada em " + posToString(pos) + " (persistente). UUID=" + activeFlyUuid.toString().substring(0, 8)), true);
 		} else {
 			source.sendFailure(Component.literal("Não foi possível spawnar a Drosophila."));
 		}
@@ -117,9 +120,17 @@ public class MinecraftForFlies implements ModInitializer {
 	}
 
 	private static int flyInfo(CommandSourceStack source) {
-		List<DrosophilaEntity> flies = getFlies(source.getLevel());
+		ServerLevel level = source.getLevel();
+		UUID uuid = activeFlyUuid;
+		Entity byUuid = uuid != null ? level.getEntity(uuid) : null;
+		List<DrosophilaEntity> flies = getFlies(level);
+		LOGGER.info("[Drosophila] info: activeFlyUuid={} getEntity={} aabb={} entidade(s) no level {}",
+				uuid, byUuid == null ? null : byUuid.getClass().getSimpleName(),
+				flies.size(), level.dimension().location());
 		if (flies.isEmpty()) {
-			source.sendSuccess(() -> Component.literal("Nenhuma Drosophila ativa neste mundo. Use /fly spawn."), false);
+			source.sendSuccess(() -> Component.literal(
+					"Nenhuma Drosophila ativa neste mundo. Use /fly spawn. (uuid="
+					+ (uuid != null ? uuid.toString().substring(0, 8) : "null") + ")"), false);
 			return 1;
 		}
 		for (DrosophilaEntity fly : flies) {
@@ -136,16 +147,22 @@ public class MinecraftForFlies implements ModInitializer {
 		UUID uuid = activeFlyUuid;
 		if (uuid != null) {
 			Entity e = level.getEntity(uuid);
-			if (e instanceof DrosophilaEntity fly) return fly;
+			if (e instanceof DrosophilaEntity fly) {
+				return fly;
+			}
+			LOGGER.warn("[Drosophila] activeFlyUuid={} não resolveu para DrosophilaEntity (getEntity retornou {}). Buscando por AABB...",
+					uuid, e == null ? "null" : e.getClass().getSimpleName());
 		}
 		List<DrosophilaEntity> flies = getFlies(level);
 		return flies.isEmpty() ? null : flies.get(0);
 	}
 
 	private static List<DrosophilaEntity> getFlies(ServerLevel level) {
+		// AABB com +/-Infinity pode quebrar consultas internas.
+		// Mantemos um volume bem grande e finito.
 		return level.getEntitiesOfClass(DrosophilaEntity.class,
-				new AABB(Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY,
-						Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY));
+				new AABB(-30_000_000, -30_000_000, -30_000_000,
+						30_000_000, 30_000_000, 30_000_000));
 	}
 
 	private static String posToString(Vec3 pos) {

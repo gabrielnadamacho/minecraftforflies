@@ -34,19 +34,18 @@ public class MinecraftForFliesClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         // Renderer da Drosophila (precisa vir antes do servidor HTTP para visual)
-        net.fabricmc.fabric.api.client.rendering.v1.EntityModelLayerRegistry.registerModelLayer(
-                FlyRenderer.LAYER, FlyRenderer::createBodyLayer);
         net.fabricmc.fabric.api.client.rendering.v1.EntityRendererRegistry.register(
                 MinecraftForFlies.DROSOPHILA, FlyRenderer::new);
 
         System.out.println("[DrosophilaBrain] Inicializando interface biológica e servidor HTTP (porta 8080)...");
         try {
-            server = HttpServer.create(new InetSocketAddress(8080), 0);
+            // Bind explicitamente em 127.0.0.1 para evitar problemas de IPv6 no Windows
+            server = HttpServer.create(new InetSocketAddress("127.0.0.1", 8080), 0);
             server.createContext("/state", new StateHandler());
             server.createContext("/action", new ActionHandler());
             server.setExecutor(null);
             server.start();
-            System.out.println("[DrosophilaBrain] Servidor HTTP pronto em http://localhost:8080");
+            System.out.println("[DrosophilaBrain] Servidor HTTP pronto em http://127.0.0.1:8080");
         } catch (IOException e) {
             e.printStackTrace();
         }
