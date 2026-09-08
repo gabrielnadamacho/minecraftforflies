@@ -107,6 +107,7 @@ def main():
             health = state.get('health', 20)
             hurt = state.get('hurt', False)
             flight_attempt = state.get('flight_attempt', False)
+            in_water = state.get('in_water', False)
             blocks = state.get('blocks', [])
             threats = state.get('threats', [])
             friends = state.get('friends', [])
@@ -121,8 +122,10 @@ def main():
             if friends:
                 stimulus -= 0.1
 
-            # PUNIÇÃO POR RUÍDO NEURAL: Se tentar voar, injetamos ruído estocástico de alta amplitude diretamente nos neurônios!
-            if flight_attempt:
+            # PUNIÇÃO POR RUÍDO NEURAL: apenas fora d'água. Nadar é permitido (a
+            # Drosophila é anfíbia no mod), então em água não aplicamos o ruído
+            # aversivo que faria a mosca recuar/flutuar descontrolado.
+            if flight_attempt and not in_water:
                 noise_punishment = np.random.normal(loc=0.0, scale=3.5, size=n_neurons)
                 activations += noise_punishment
                 neural_noise_active = True
@@ -150,7 +153,17 @@ def main():
             thoughts = ""
             action_desc = ""
 
-            if neural_noise_active or flight_attempt:
+            if in_water:
+                # Natação: sem ruído punitivo. Rema (forward + strafe) e usa o
+                # jump para boiar/não afundar. Explora a água como território.
+                thoughts = "🌊 Na água! Nadando livre — sem ruído punitivo aqui."
+                action_desc = "Nadando"
+                forward = 1.0
+                strafe = float(np.random.choice([-1.0, 1.0]))
+                jump = True  # boia/nada para cima se estiver submerso
+                if np.random.random() < 0.3:
+                    yaw_delta = float(np.random.choice([-40.0, 40.0]))
+            elif neural_noise_active or flight_attempt:
                 thoughts = "⚠️ RUÍDO NEURAL DETECTADO! Tentei levantar voo e meus neurônios sofreram perturbação aversiva. Devo manter os 6 pezinhos firmes no chão!"
                 action_desc = "Castigo por tentativa de voo (Ruído Neural Aplicado)"
                 forward = -1.0 # Recuar imediatamente

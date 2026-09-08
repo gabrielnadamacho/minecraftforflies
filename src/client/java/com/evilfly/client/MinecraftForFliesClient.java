@@ -117,6 +117,12 @@ public class MinecraftForFliesClient implements ClientModInitializer {
                 float health = fly.getHealth();
                 boolean hurt = fly.hurtTime > 0;
                 boolean flightAttempt = MinecraftForFlies.targetJumping && !fly.onGround();
+                boolean inWater = fly.isInWater();
+                // Distâncias de "sensor" por categoria. O SENSOR de ameaça (20 blocos) é
+                // maior que o raio de ataque (8) para a mosca se orientar antes. O
+                // territorial de players é 150 (raciocínio 8 = ataque melee apenas).
+                final double SENSE_THREAT = 20.0;
+                final double SENSE_ITEM = 12.0;
 
                 // Grade sensorial 3x3x3 ensinando a mosca o que cada bloco é
                 List<Map<String, String>> blockSensoryData = new ArrayList<>();
@@ -144,8 +150,10 @@ public class MinecraftForFliesClient implements ClientModInitializer {
                 List<String> items = new ArrayList<>();
                 for (Entity e : client.level.getEntitiesOfClass(Entity.class,
                         fly.getBoundingBox().inflate(150.0), entity -> entity != fly)) {
+                    double ds = e.distanceToSqr(fly);
                     if (e instanceof Monster) {
-                        threats.add(e.getName().getString());
+                        // SENSOR de ameaça — orienta a mosca antes do alcance de ataque.
+                        if (ds < SENSE_THREAT * SENSE_THREAT) threats.add(e.getName().getString());
                     } else if (e instanceof Player) {
                         String pname = e.getName().getString();
                         Map<String, String> pf = new HashMap<>();
@@ -164,13 +172,13 @@ public class MinecraftForFliesClient implements ClientModInitializer {
                         }});
                         friends.add(pf);
                     } else if (e instanceof ItemEntity) {
-                        items.add(e.getName().getString());
+                        if (ds < SENSE_ITEM * SENSE_ITEM) items.add(e.getName().getString());
                     }
                 }
 
                 json = String.format(Locale.ROOT,
-                        "{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"health\":%.1f,\"hurt\":%b,\"flight_attempt\":%b,\"blocks\":%s,\"threats\":%s,\"friends\":%s,\"items\":%s,\"thoughts\":\"%s\"}",
-                        x, y, z, health, hurt, flightAttempt,
+                        "{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"health\":%.1f,\"hurt\":%b,\"flight_attempt\":%b,\"in_water\":%b,\"blocks\":%s,\"threats\":%s,\"friends\":%s,\"items\":%s,\"thoughts\":\"%s\"}",
+                        x, y, z, health, hurt, flightAttempt, inWater,
                         blocksToJson(blockSensoryData), listToJson(threats), friendsToJson(friends), listToJson(items),
                         MinecraftForFlies.lastThoughts.replace("\"", "\\\"").replace("\n", " "));
             }
