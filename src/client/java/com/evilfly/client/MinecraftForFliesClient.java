@@ -27,6 +27,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 public class MinecraftForFliesClient implements ClientModInitializer {
     private HttpServer server;
@@ -69,7 +71,30 @@ public class MinecraftForFliesClient implements ClientModInitializer {
     static class StateHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
+            // A leitura do mundo (client.level, getEntitiesOfClass, getBlockState)
+            // só é segura na render thread, dona do mundo. O Java HttpServer roda os
+            // handlers em threads de worker; então delegamos a montagem do JSON à
+            // render thread via CompletableFuture e aguardamos o resultado aqui,
+            // com timeout para nunca travar se o client estiver encerrando.
             Minecraft client = Minecraft.getInstance();
+            CompletableFuture<String> future = new CompletableFuture<>();
+            client.execute(() -> future.complete(buildStateJson(client)));
+            String json;
+            try {
+                json = future.get(2, TimeUnit.SECONDS);
+            } catch (Exception e) {
+                json = "{}";
+            }
+            byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+            exchange.sendResponseHeaders(200, bytes.length);
+            OutputStream os = exchange.getResponseBody();
+            os.write(bytes);
+            os.close();
+        }
+
+        /** Monta o JSON sensorial; SÓ chamar na render thread. */
+        private String buildStateJson(Minecraft client) {
             DrosophilaEntity fly = activeFly(client);
             String json = "{}";
             if (fly != null) {
@@ -118,12 +143,7 @@ public class MinecraftForFliesClient implements ClientModInitializer {
                         MinecraftForFlies.lastThoughts.replace("\"", "\\\"").replace("\n", " "));
             }
 
-            byte[] bytes = json.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
-            exchange.sendResponseHeaders(200, bytes.length);
-            OutputStream os = exchange.getResponseBody();
-            os.write(bytes);
-            os.close();
+            return json;
         }
 
         private String blocksToJson(List<Map<String, String>> blocks) {
@@ -168,6 +188,9 @@ public class MinecraftForFliesClient implements ClientModInitializer {
                 if (thoughts != null) {
                     MinecraftForFlies.lastThoughts = thoughts;
                 }
+                // Heartbeat: registra cada /action para o watchdog de morte cerebral
+                // no servidor saber que o cérebro está vivo.
+                MinecraftForFlies.lastActionAt = System.currentTimeMillis();
                 if (++actionCount % 20 == 0) {
                     System.out.println("[DrosophilaBrain] /action aplicado: fwd=" + MinecraftForFlies.targetForward
                             + " strafe=" + MinecraftForFlies.targetStrafing + " yaw_delta=" + MinecraftForFlies.targetYawDelta);

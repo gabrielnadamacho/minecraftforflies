@@ -45,6 +45,11 @@ public class MinecraftForFlies implements ModInitializer {
 	public static volatile float targetPitchDelta = 0f;
 	public static volatile String lastThoughts = "Drosophila melanogaster ativa no substrato.";
 	public static volatile UUID activeFlyUuid = null;
+	// Heartbeat: timestamp (ms) do último /action recebido do cérebro. Se o cérebro
+	// morrer/desconectar, a mosca paradas os comandos em ~BRAIN_DEAD_MS.
+	public static volatile long lastActionAt = 0L;
+	// Após este tempo sem /action, a mosca assume "morte cerebral" e zera o motor.
+	public static final long BRAIN_DEAD_MS = 1500L;
 
 	public static final EntityType<DrosophilaEntity> DROSOPHILA = Registry.register(
 			BuiltInRegistries.ENTITY_TYPE, id("drosophila"),
