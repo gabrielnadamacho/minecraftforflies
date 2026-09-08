@@ -110,6 +110,7 @@ def main():
             blocks = state.get('blocks', [])
             threats = state.get('threats', [])
             friends = state.get('friends', [])
+            items = state.get('items', [])
 
             # --- PROCESSAMENTO NEURAL BIOLÓGICO & RUÍDO NEURAL ---
             stimulus = 0.1
@@ -173,27 +174,62 @@ def main():
                     forward = -1.0
                     yaw_delta = 110.0
             elif friends:
-                friend_name = friends[0]
-                thoughts = f"💚 Reconheço um player real ({friend_name}). Eles são amigos! Explorando pacificamente por perto."
-                action_desc = f"Acompanhando o player amigo {friend_name}"
+                # friends = [{name,x,y,z,moving}, ...]. A mosca mantém território num
+                # raio de ~150 blocos do player. Se o player ANDA, ela segue; se para,
+                # volta a explorar perto dele.
+                friend = friends[0]
+                friend_name = friend.get('name', 'player')
+                fx = float(friend.get('x', x))
+                fz = float(friend.get('z', z))
+                moving = str(friend.get('moving', 'false')).lower() == 'true'
+                dist = ((fx - x) ** 2 + (fz - z) ** 2) ** 0.5
+
+                if moving:
+                    # Player em movimento: segue, virando na direção dele
+                    thoughts = f"💚 {friend_name} está andando! Acompanhando em {'%.0f' % dist} blocos."
+                    action_desc = f"Segundo o player {friend_name}"
+                    forward = 1.0
+                    # gira em direção ao player (deg, + é horário no Minecraft)
+                    yaw_to = np.degrees(np.arctan2(fx - x, fz - z))
+                    yaw_to = (yaw_to - np.degrees(np.arctan2(0, 1)))  # normaliza rel a norte
+                    yaw_delta = float(((yaw_to % 360) + 360) % 360 - 180) * 0.5
+                elif dist > 150.0:
+                    # Fora do território: volta para perto do player
+                    thoughts = f"🏠 {friend_name} está longe ({'%.0f' % dist} blocos). Retornando ao território."
+                    action_desc = f"Voltando para o território de {friend_name}"
+                    forward = 1.0
+                    yaw_delta = float(((np.degrees(np.arctan2(fx - x, fz - z)) % 360) + 360) % 360 - 180) * 0.5
+                else:
+                    # Player parado: explora o território perto dele
+                    thoughts = f"🌍 {friend_name} parado. Explorando o território ao redor."
+                    action_desc = "Explorando território"
+                    forward = 1.0
+                    if np.random.random() < 0.3:
+                        yaw_delta = float(np.random.choice([-35.0, 35.0]))
+            elif items:
+                # Itens soltos = recursos valiosos. Recolher é prioridade biológica
+                # (a mosca equipa arma no main hand e usa contra ameaças).
+                item_name = items[0]
+                thoughts = f"💎 Recurso detectado: {item_name}. Indo recolher para defesa/combate."
+                action_desc = f"Coletando {item_name}"
                 forward = 1.0
             else:
                 # Análise dos blocos locais via dados diretos
                 block_names = [b.get('name', 'ar') for b in blocks if b.get('solid') == 'true']
                 sample_block = block_names[0] if block_names else "ar"
 
-                if brain_activity < 0.1:
-                    thoughts = f"💤 Substrato estável ({sample_block}) nas coordenadas ({x:.1f}, {y:.1f}, {z:.1f}). Repousando asas."
-                    action_desc = "Repouso no substrato"
-                    forward = 0.0
-                elif brain_activity < 0.4:
+                if brain_activity < 0.4:
                     thoughts = f"🌿 Caminhando sobre {sample_block} em ({x:.1f}, {y:.1f}, {z:.1f}). Mapeando cheiros e texturas."
                     action_desc = "Caminhando no solo"
                     forward = 1.0
+                    if np.random.random() < 0.25:
+                        # Exploração lateral: desvio orgânico de rota
+                        yaw_delta = float(np.random.choice([-30.0, 30.0]))
                 else:
                     thoughts = f"🔍 Alta atividade sensorial sobre {sample_block}. Girando para inspecionar o ambiente."
                     action_desc = "Inspecionando o ambiente"
                     yaw_delta = 35.0
+                    forward = 1.0
 
             send_action(forward, strafe, jump, attack, yaw_delta, 0.0, thoughts)
 

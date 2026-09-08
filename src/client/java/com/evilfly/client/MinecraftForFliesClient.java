@@ -12,6 +12,7 @@ import com.sun.net.httpserver.HttpServer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.block.state.BlockState;
@@ -30,7 +31,19 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 public class MinecraftForFliesClient implements ClientModInitializer {
+    private static final Logger LOGGER = LoggerFactory.getLogger("minecraft-for-flies-client");
+    // Guarda a posição anterior de cada player para inferir "andando" (sem info do servidor)
+    private static final Map<String, VecMoving> lastPlayerPos = new HashMap<>();
+
+    // DTO simples só para guardar last x/z de um player
+    static class VecMoving {
+        double x, z;
+    }
+
     private HttpServer server;
 
     @Override
@@ -126,24 +139,56 @@ public class MinecraftForFliesClient implements ClientModInitializer {
 
                 // Reconhecimento de entidades: mobs hostis = ameaças, players = amigos
                 List<String> threats = new ArrayList<>();
-                List<String> friends = new ArrayList<>();
+                List<Map<String, String>> friends = new ArrayList<>();
+                // Itens soltos no chão (para o cérebro decidir recolher)
+                List<String> items = new ArrayList<>();
                 for (Entity e : client.level.getEntitiesOfClass(Entity.class,
-                        fly.getBoundingBox().inflate(12.0), entity -> entity != fly)) {
+                        fly.getBoundingBox().inflate(150.0), entity -> entity != fly)) {
                     if (e instanceof Monster) {
                         threats.add(e.getName().getString());
                     } else if (e instanceof Player) {
-                        friends.add(e.getName().getString());
+                        String pname = e.getName().getString();
+                        Map<String, String> pf = new HashMap<>();
+                        pf.put("name", pname);
+                        pf.put("x", String.format(Locale.ROOT, "%.2f", e.getX()));
+                        pf.put("y", String.format(Locale.ROOT, "%.2f", e.getY()));
+                        pf.put("z", String.format(Locale.ROOT, "%.2f", e.getZ()));
+                        // "andando?" = deslocou horizontalmente > 0.5 bloco desde o último /state
+                        VecMoving prev = lastPlayerPos.get(pname);
+                        double dx = prev == null ? 0 : e.getX() - prev.x;
+                        double dz = prev == null ? 0 : e.getZ() - prev.z;
+                        boolean moving = (dx * dx + dz * dz) > 0.25;
+                        pf.put("moving", String.valueOf(moving));
+                        lastPlayerPos.put(pname, new VecMoving() {{
+                            x = e.getX(); z = e.getZ();
+                        }});
+                        friends.add(pf);
+                    } else if (e instanceof ItemEntity) {
+                        items.add(e.getName().getString());
                     }
                 }
 
                 json = String.format(Locale.ROOT,
-                        "{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"health\":%.1f,\"hurt\":%b,\"flight_attempt\":%b,\"blocks\":%s,\"threats\":%s,\"friends\":%s,\"thoughts\":\"%s\"}",
+                        "{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"health\":%.1f,\"hurt\":%b,\"flight_attempt\":%b,\"blocks\":%s,\"threats\":%s,\"friends\":%s,\"items\":%s,\"thoughts\":\"%s\"}",
                         x, y, z, health, hurt, flightAttempt,
-                        blocksToJson(blockSensoryData), listToJson(threats), listToJson(friends),
+                        blocksToJson(blockSensoryData), listToJson(threats), friendsToJson(friends), listToJson(items),
                         MinecraftForFlies.lastThoughts.replace("\"", "\\\"").replace("\n", " "));
             }
 
             return json;
+        }
+
+        private String friendsToJson(List<Map<String, String>> friends) {
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < friends.size(); i++) {
+                Map<String, String> f = friends.get(i);
+                sb.append(String.format(Locale.ROOT,
+                        "{\"name\":\"%s\",\"x\":%s,\"y\":%s,\"z\":%s,\"moving\":%s}",
+                        f.get("name"), f.get("x"), f.get("y"), f.get("z"), f.get("moving")));
+                if (i < friends.size() - 1) sb.append(",");
+            }
+            sb.append("]");
+            return sb.toString();
         }
 
         private String blocksToJson(List<Map<String, String>> blocks) {
