@@ -150,25 +150,27 @@ public class MinecraftForFliesClient implements ClientModInitializer {
     }
 
     static class ActionHandler implements HttpHandler {
+        private static int actionCount = 0;
+
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) {
                 String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+                // O Python envia JSON via json.dumps() → "key": valor (com ESPAÇO após
+                // os dois-pontos). Os parsers pulam whitespace antes de ler o valor.
                 MinecraftForFlies.targetForward = parseJsonFloat(body, "forward", MinecraftForFlies.targetForward);
                 MinecraftForFlies.targetStrafing = parseJsonFloat(body, "strafe", MinecraftForFlies.targetStrafing);
                 MinecraftForFlies.targetJumping = parseJsonBool(body, "jump", MinecraftForFlies.targetJumping);
                 MinecraftForFlies.targetAttacking = parseJsonBool(body, "attack", false);
                 MinecraftForFlies.targetYawDelta = parseJsonFloat(body, "yaw_delta", 0f);
                 MinecraftForFlies.targetPitchDelta = parseJsonFloat(body, "pitch_delta", 0f);
-                if (body.contains("\"thoughts\"")) {
-                    int idx = body.indexOf("\"thoughts\":\"");
-                    if (idx != -1) {
-                        int start = idx + 12;
-                        int end = body.indexOf("\"", start);
-                        if (end != -1) {
-                            MinecraftForFlies.lastThoughts = body.substring(start, end);
-                        }
-                    }
+                String thoughts = parseJsonString(body, "thoughts");
+                if (thoughts != null) {
+                    MinecraftForFlies.lastThoughts = thoughts;
+                }
+                if (++actionCount % 20 == 0) {
+                    System.out.println("[DrosophilaBrain] /action aplicado: fwd=" + MinecraftForFlies.targetForward
+                            + " strafe=" + MinecraftForFlies.targetStrafing + " yaw_delta=" + MinecraftForFlies.targetYawDelta);
                 }
             }
             String response = "{\"status\":\"ok\"}";
@@ -178,12 +180,12 @@ public class MinecraftForFliesClient implements ClientModInitializer {
             os.close();
         }
 
-        private float parseJsonFloat(String json, String key, float defaultVal) {
+        private static float parseJsonFloat(String json, String key, float defaultVal) {
             try {
                 String search = "\"" + key + "\":";
                 int idx = json.indexOf(search);
                 if (idx == -1) return defaultVal;
-                int start = idx + search.length();
+                int start = skipWs(json, idx + search.length());
                 int end = start;
                 while (end < json.length()) {
                     char c = json.charAt(end);
@@ -200,16 +202,44 @@ public class MinecraftForFliesClient implements ClientModInitializer {
             }
         }
 
-        private boolean parseJsonBool(String json, String key, boolean defaultVal) {
+        private static boolean parseJsonBool(String json, String key, boolean defaultVal) {
             try {
                 String search = "\"" + key + "\":";
                 int idx = json.indexOf(search);
                 if (idx == -1) return defaultVal;
-                int start = idx + search.length();
+                int start = skipWs(json, idx + search.length());
                 if (json.startsWith("true", start)) return true;
                 if (json.startsWith("false", start)) return false;
             } catch (Exception e) {}
             return defaultVal;
+        }
+
+        private static String parseJsonString(String json, String key) {
+            try {
+                String search = "\"" + key + "\"";
+                int idx = json.indexOf(search);
+                if (idx == -1) return null;
+                int colon = json.indexOf(':', idx);
+                if (colon == -1) return null;
+                int start = skipWs(json, colon + 1);
+                if (start >= json.length() || json.charAt(start) != '"') return null;
+                int end = start + 1;
+                while (end < json.length() && json.charAt(end) != '"') {
+                    if (json.charAt(end) == '\\') end++; // pula escape \" etc.
+                    end++;
+                }
+                if (end >= json.length()) return null;
+                return json.substring(start + 1, end);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+
+        private static int skipWs(String json, int start) {
+            while (start < json.length() && (json.charAt(start) == ' ' || json.charAt(start) == '\t')) {
+                start++;
+            }
+            return start;
         }
     }
 }

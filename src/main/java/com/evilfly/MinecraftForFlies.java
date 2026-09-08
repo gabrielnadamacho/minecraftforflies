@@ -79,7 +79,10 @@ public class MinecraftForFlies implements ModInitializer {
 	private static int spawnFly(CommandSourceStack source) {
 		ServerLevel level = source.getLevel();
 		DrosophilaEntity found = findFly(level);
-		if (found == null) {
+		// Se a mosca de sessão anterior persistiu no mundo (NBT), ela já está
+		// adicionada ao level — addFreshEntity falharia ("UUID already exists").
+		boolean fresh = found == null || level.getEntity(found.getUUID()) != found;
+		if (fresh) {
 			found = new DrosophilaEntity(DROSOPHILA, level);
 		}
 		Vec3 pos = source.getPosition();
@@ -87,14 +90,14 @@ public class MinecraftForFlies implements ModInitializer {
 		found.setCustomName(Component.literal("Drosophila"));
 		found.setCustomNameVisible(true);
 		found.setHealth(found.getMaxHealth());
-		if (level.addFreshEntity(found)) {
-			activeFlyUuid = found.getUUID();
-			LOGGER.info("[Drosophila] spawnada UUID={} em {} no level {}", activeFlyUuid, posToString(pos), level.dimension().location());
-			source.sendSuccess(() -> Component.literal(
-					"Drosophila spawnada em " + posToString(pos) + " (persistente). UUID=" + activeFlyUuid.toString().substring(0, 8)), true);
-		} else {
+		if (fresh && !level.addFreshEntity(found)) {
 			source.sendFailure(Component.literal("Não foi possível spawnar a Drosophila."));
+			return 1;
 		}
+		activeFlyUuid = found.getUUID();
+		LOGGER.info("[Drosophila] spawnada UUID={} em {} no level {}", activeFlyUuid, posToString(pos), level.dimension().location());
+		source.sendSuccess(() -> Component.literal(
+				"Drosophila spawnada em " + posToString(pos) + " (persistente). UUID=" + activeFlyUuid.toString().substring(0, 8)), true);
 		return 1;
 	}
 
