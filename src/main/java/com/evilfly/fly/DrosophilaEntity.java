@@ -10,7 +10,6 @@ import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.level.Level;
-import net.minecraft.world.phys.Vec3;
 
 /**
  * Drosophila melanogaster.
@@ -46,54 +45,35 @@ public class DrosophilaEntity extends PathfinderMob {
 
 	@Override
 	public void aiStep() {
-		// Primeiro a física vanilla (gravidade, atrito, colisão). Depois o cérebro
-		// impõe a velocidade desejada por cima, sem depender do motor de input do Mob.
+		if (!this.level().isClientSide) {
+			// 1) Input do cérebro → campos do Mob ANTES do super.aiStep()
+			//    para que LivingEntity.travel() os consuma neste tick.
+			float fwd = MinecraftForFlies.targetForward;
+			float strafe = MinecraftForFlies.targetStrafing;
+			this.setZza(fwd);
+			this.setXxa(strafe);
+
+			// Rotação: aplica antes do travel para que o vetor de movimento
+			// use o yaw já atualizado.
+			float yaw = MinecraftForFlies.targetYawDelta;
+			if (yaw != 0f) {
+				this.setYRot(this.getYRot() + yaw);
+				this.yHeadRot = this.getYRot();
+				MinecraftForFlies.targetYawDelta = 0f;
+			}
+			float pitch = MinecraftForFlies.targetPitchDelta;
+			if (pitch != 0f) {
+				this.setXRot(Mth.clamp(this.getXRot() + pitch, -90f, 90f));
+				MinecraftForFlies.targetPitchDelta = 0f;
+			}
+
+			// Pulo: consome o flag e pula se no chão.
+			if (MinecraftForFlies.targetJumping && this.onGround()) {
+				this.jumpFromGround();
+			}
+		}
+
+		// 2) Física vanilla (gravidade, atrito, colisão, travel com nossos zza/xxa).
 		super.aiStep();
-		if (this.level().isClientSide) return;
-
-		applyLook();
-
-		if (MinecraftForFlies.targetJumping && this.onGround()) {
-			this.jumpFromGround();
-		}
-
-		drive();
-	}
-
-	private void applyLook() {
-		float yaw = MinecraftForFlies.targetYawDelta;
-		if (yaw != 0f) {
-			this.setYRot(this.getYRot() + yaw);
-			this.yHeadRot = this.getYRot();
-			MinecraftForFlies.targetYawDelta = 0f;
-		}
-		float pitch = MinecraftForFlies.targetPitchDelta;
-		if (pitch != 0f) {
-			this.setXRot(Mth.clamp(this.getXRot() + pitch, -90f, 90f));
-			MinecraftForFlies.targetPitchDelta = 0f;
-		}
-	}
-
-	/**
-	 * Traduz (forward, strafe) do cérebro num vetor de velocidade horizontal,
-	 * no referencial da rotação atual, e acelera o corpo naquela direção.
-	 */
-	private void drive() {
-		float fwd = MinecraftForFlies.targetForward;
-		float strafe = MinecraftForFlies.targetStrafing;
-		if (fwd == 0f && strafe == 0f) return;
-
-		double yaw = Math.toRadians(this.getYRot());
-		double cos = Math.cos(yaw);
-		double sin = Math.sin(yaw);
-		double speed = this.isInWater() ? 0.10 : 0.25;
-		float tx = (float) ((-sin * fwd + cos * strafe) * speed);
-		float tz = (float) ((cos * fwd + sin * strafe) * speed);
-
-		Vec3 d = this.getDeltaMovement();
-		this.setDeltaMovement(
-				Mth.approach((float) d.x, tx, 0.08f),
-				d.y,
-				Mth.approach((float) d.z, tz, 0.08f));
 	}
 }
