@@ -58,7 +58,7 @@ def main():
         n_neurons = 1500
         indices_visuais_matriz = list(range(150))
         W_matrix = csr_matrix((n_neurons, n_neurons))
-        activations = np.zeros(n_neurons)
+        activations = np.zeros(n_neurons, dtype=np.float32)
 
     if has_connectome:
         mapa_nt = df_neuro.set_index('root_id')['nt_type'].to_dict()
@@ -86,9 +86,10 @@ def main():
         row_sums = np.array(W_matrix.sum(axis=1)).flatten()
         row_sums[row_sums == 0] = 1.0
         W_matrix = W_matrix.multiply(1.0 / row_sums[:, np.newaxis])
+        W_matrix = W_matrix.astype(np.float32)  # matvec 2x mais leve, SIMD friendly
 
         indices_visuais_matriz = [neuron_to_idx[nid] for nid in ids_visuais if nid in neuron_to_idx]
-        activations = np.zeros(n_neurons)
+        activations = np.zeros(n_neurons, dtype=np.float32)
 
     print("[+] Conectado ao servidor do mod na porta 8080. Iniciando comportamento biológico...")
     step_count = 0
@@ -108,10 +109,26 @@ def main():
             hurt = state.get('hurt', False)
             flight_attempt = state.get('flight_attempt', False)
             in_water = state.get('in_water', False)
-            blocks = state.get('blocks', [])
-            threats = state.get('threats', [])
-            friends = state.get('friends', [])
-            items = state.get('items', [])
+            blocks = [b for b in (state.get('blocks') or []) if isinstance(b, dict)]
+            threats = [str(t) for t in (state.get('threats') or []) if t]
+            friends_raw = state.get('friends') or []
+            items = [str(i) for i in (state.get('items') or []) if i]
+
+            # --- NORMALIZAÇÃO DOS AMIGOS ---
+            # O /state pode vir do mod legado (lista de strings) ou do novo (lista de
+            # dicts). Blindamos para nunca derrubar o loop — a mosca é resiliente.
+            friends = []
+            for fr in friends_raw:
+                if isinstance(fr, str):
+                    # Mod legado: só temos o nome — assume player parado/presença.
+                    friends.append({'name': fr, 'x': x, 'z': z, 'moving': 'false'})
+                else:
+                    friends.append({
+                        'name': str(fr.get('name', 'player')),
+                        'x': float(fr.get('x', x)),
+                        'z': float(fr.get('z', z)),
+                        'moving': str(fr.get('moving', 'false')).lower() == 'true',
+                    })
 
             # --- PROCESSAMENTO NEURAL BIOLÓGICO & RUÍDO NEURAL ---
             stimulus = 0.1
@@ -137,12 +154,16 @@ def main():
                 activations[indices_visuais_matriz] += stim_values
 
             if has_connectome:
-                activations = W_matrix.dot(activations) + np.tanh(activations)
+                d = W_matrix.dot(activations)
+                np.tanh(activations, out=activations)
+                activations += d
             else:
-                activations = np.tanh(activations + stimulus)
-            activations = np.clip(activations, -1.0, 1.0)
+                activations += stimulus
+                np.tanh(activations, out=activations)
+            np.clip(activations, -1.0, 1.0, out=activations)
 
-            brain_activity = np.max(np.abs(activations))
+            # brain_activity ≈ max(|x|) sem copia/alloc por tick
+            brain_activity = max(float(activations.max()), float(-activations.min()))
 
             # --- COMPORTAMENTO DA DROSOPHILA ---
             forward = 0.0
@@ -182,10 +203,14 @@ def main():
                     forward = 1.0
                     attack = True
                 else:
-                    thoughts = f"👁️ Detecção de ameaça ({mob_name}). Desviando para longe do predador."
-                    action_desc = f"Desviando de {mob_name}"
-                    forward = -1.0
-                    yaw_delta = 110.0
+                    # FIX BIO: anteriormente recuava eternamente (dodge) sem chegar
+                    # ao alcance de 8 blocos para o golpe conectar. Resposta real:
+                    # fecha distância para atacar. Se levar dano, a branch 'hurt'
+                    # (prioridade superior) assume e aplica fuga.
+                    thoughts = f"⚔️ Ameaça ({mob_name}) detectada. Fechando distância para atacar."
+                    action_desc = f"Avançando em {mob_name}"
+                    forward = 1.0
+                    attack = True
             elif friends:
                 # friends = [{name,x,y,z,moving}, ...]. A mosca mantém território num
                 # raio de ~150 blocos do player. Se o player ANDA, ela segue; se para,
