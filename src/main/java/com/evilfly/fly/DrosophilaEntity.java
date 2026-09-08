@@ -10,6 +10,7 @@ import net.minecraft.world.entity.PathfinderMob;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.phys.Vec3;
 
 /**
  * Drosophila melanogaster.
@@ -46,15 +47,8 @@ public class DrosophilaEntity extends PathfinderMob {
 	@Override
 	public void aiStep() {
 		if (!this.level().isClientSide) {
-			// 1) Input do cérebro → campos do Mob ANTES do super.aiStep()
-			//    para que LivingEntity.travel() os consuma neste tick.
-			float fwd = MinecraftForFlies.targetForward;
-			float strafe = MinecraftForFlies.targetStrafing;
-			this.setZza(fwd);
-			this.setXxa(strafe);
-
-			// Rotação: aplica antes do travel para que o vetor de movimento
-			// use o yaw já atualizado.
+			// Rotação: aplica antes do super.aiStep() para que o vetor de
+			// movimento (com base no yaw) use a orientação já atualizada.
 			float yaw = MinecraftForFlies.targetYawDelta;
 			if (yaw != 0f) {
 				this.setYRot(this.getYRot() + yaw);
@@ -67,13 +61,34 @@ public class DrosophilaEntity extends PathfinderMob {
 				MinecraftForFlies.targetPitchDelta = 0f;
 			}
 
-			// Pulo: consome o flag e pula se no chão.
+			// Pulo: pula se no chão.
 			if (MinecraftForFlies.targetJumping && this.onGround()) {
 				this.jumpFromGround();
 			}
 		}
 
-		// 2) Física vanilla (gravidade, atrito, colisão, travel com nossos zza/xxa).
+		// Física vanilla (gravidade, atrito, colisão).
 		super.aiStep();
+	}
+
+	/**
+	 * Ponto crucial: LivingEntity.aiStep() roda o AI vanilla (goalSelector,
+	 * navigation, moveControl) via serverAiStep() ANTES de montar o Vec3 do
+	 * travel() — e, sem nenhum goal/path, ele zera zza/xxa. Por isso NÃO
+	 * adiantava setar inputs antes do super.aiStep().
+	 *
+	 * Aqui injetamos os valores do cérebro DIRETO no travel(), contornando
+	 * qualquer interferência do AI vanilla. Ordem do Vec3: (strafe, up, forward).
+	 */
+	@Override
+	public void travel(Vec3 travelInput) {
+		if (!this.level().isClientSide) {
+			super.travel(new Vec3(
+					MinecraftForFlies.targetStrafing,
+					travelInput.y,
+					MinecraftForFlies.targetForward));
+		} else {
+			super.travel(travelInput);
+		}
 	}
 }
