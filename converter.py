@@ -38,8 +38,8 @@ def send_action(forward=0.0, strafe=0.0, jump=False, attack=False, yaw_delta=0.0
         )
         with urllib.request.urlopen(req, timeout=0.5) as resp:
             pass
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[!] Erro de comunicação HTTP: {e}")
 
 def main():
     print("=== Drosophila melanogaster: Conectoma Cerebral Biológico Integrado ao Minecraft 1.20.1 ===")
@@ -138,7 +138,7 @@ def main():
                 activations = np.tanh(activations + stimulus)
             activations = np.clip(activations, -1.0, 1.0)
 
-            brain_activity = np.mean(np.abs(activations))
+            brain_activity = np.max(np.abs(activations))
 
             # --- COMPORTAMENTO DA DROSOPHILA ---
             forward = 0.0
@@ -152,7 +152,7 @@ def main():
             if neural_noise_active or flight_attempt:
                 thoughts = "⚠️ RUÍDO NEURAL DETECTADO! Tentei levantar voo e meus neurônios sofreram perturbação aversiva. Devo manter os 6 pezinhos firmes no chão!"
                 action_desc = "Castigo por tentativa de voo (Ruído Neural Aplicado)"
-                forward = -0.6 # Recuar imediatamente
+                forward = -1.0 # Recuar imediatamente
                 jump = False
             elif hurt:
                 thoughts = "💥 Estímulo nociceptivo! Sofri dano físico. Acionando circuito de fuga urgente!"
@@ -165,31 +165,31 @@ def main():
                 if brain_activity > 0.6:
                     thoughts = f"⚔️ Perigo biológico! Mob hostil detectado ({mob_name}). Atacando com peças bucais/patas."
                     action_desc = f"Lutando contra {mob_name}"
-                    forward = 0.8
+                    forward = 1.0
                     attack = True
                 else:
                     thoughts = f"👁️ Detecção de ameaça ({mob_name}). Desviando para longe do predador."
                     action_desc = f"Desviando de {mob_name}"
-                    forward = -0.8
+                    forward = -1.0
                     yaw_delta = 110.0
             elif friends:
                 friend_name = friends[0]
                 thoughts = f"💚 Reconheço um player real ({friend_name}). Eles são amigos! Explorando pacificamente por perto."
                 action_desc = f"Acompanhando o player amigo {friend_name}"
-                forward = 0.5
+                forward = 1.0
             else:
                 # Análise dos blocos locais via dados diretos
                 block_names = [b.get('name', 'ar') for b in blocks if b.get('solid') == 'true']
                 sample_block = block_names[0] if block_names else "ar"
 
-                if brain_activity < 0.2:
+                if brain_activity < 0.1:
                     thoughts = f"💤 Substrato estável ({sample_block}) nas coordenadas ({x:.1f}, {y:.1f}, {z:.1f}). Repousando asas."
                     action_desc = "Repouso no substrato"
                     forward = 0.0
-                elif brain_activity < 0.5:
+                elif brain_activity < 0.4:
                     thoughts = f"🌿 Caminhando sobre {sample_block} em ({x:.1f}, {y:.1f}, {z:.1f}). Mapeando cheiros e texturas."
                     action_desc = "Caminhando no solo"
-                    forward = 0.7
+                    forward = 1.0
                 else:
                     thoughts = f"🔍 Alta atividade sensorial sobre {sample_block}. Girando para inspecionar o ambiente."
                     action_desc = "Inspecionando o ambiente"
