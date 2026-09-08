@@ -83,13 +83,18 @@ public class DrosophilaEntity extends PathfinderMob {
 	@Override
 	public void travel(Vec3 travelInput) {
 		if (!this.level().isClientSide) {
-			// Telemetria: a cada ~2s (40 ticks), confirma no log que o travel()
-			// está rodando com os valores do cérebro.
 			if (this.tickCount % 40 == 0) {
+				// Diagnóstico completo para identificar POR QUE travel não move.
+				net.minecraft.world.phys.Vec3 vel = this.getDeltaMovement();
 				MinecraftForFlies.LOGGER.info(
-						"[Drosophila] travel: fwd={} strafe={} | pos=({},{},{}) yaw={} chao={}",
+						"[Drosophila] travel: fwd={} strafe={} pos=({},{},{}) yaw={} chao={}"
+						+ " | effAi={} noAi={} dead={} removed={} speed={}"
+						+ " | velMag={} velY={} inputY={}",
 						MinecraftForFlies.targetForward, MinecraftForFlies.targetStrafing,
-						this.getX(), this.getY(), this.getZ(), this.getYRot(), this.onGround());
+						this.getX(), this.getY(), this.getZ(), this.getYRot(), this.onGround(),
+						this.isEffectiveAi(), this.isNoAi(), this.isDeadOrDying(), this.isRemoved(),
+						this.getSpeed(),
+						vel.horizontalDistanceSqr(), vel.y, travelInput.y);
 			}
 			super.travel(new Vec3(
 					MinecraftForFlies.targetStrafing,
