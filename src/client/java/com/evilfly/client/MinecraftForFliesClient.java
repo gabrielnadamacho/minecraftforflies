@@ -146,8 +146,8 @@ public class MinecraftForFliesClient implements ClientModInitializer {
                 // Reconhecimento de entidades: mobs hostis = ameaças, players = amigos
                 List<String> threats = new ArrayList<>();
                 List<Map<String, String>> friends = new ArrayList<>();
-                // Itens soltos no chão (para o cérebro decidir recolher)
-                List<String> items = new ArrayList<>();
+                // Itens soltos no chão (para o cérebro decidir recolher) — agora com coordenadas
+                List<Map<String, String>> items = new ArrayList<>();
                 for (Entity e : client.level.getEntitiesOfClass(Entity.class,
                         fly.getBoundingBox().inflate(150.0), entity -> entity != fly)) {
                     double ds = e.distanceToSqr(fly);
@@ -161,25 +161,43 @@ public class MinecraftForFliesClient implements ClientModInitializer {
                         pf.put("x", String.format(Locale.ROOT, "%.2f", e.getX()));
                         pf.put("y", String.format(Locale.ROOT, "%.2f", e.getY()));
                         pf.put("z", String.format(Locale.ROOT, "%.2f", e.getZ()));
+                        pf.put("dist", String.format(Locale.ROOT, "%.1f", Math.sqrt(ds)));
                         // "andando?" = deslocou horizontalmente > 0.5 bloco desde o último /state
                         VecMoving prev = lastPlayerPos.get(pname);
-                        double dx = prev == null ? 0 : e.getX() - prev.x;
-                        double dz = prev == null ? 0 : e.getZ() - prev.z;
-                        boolean moving = (dx * dx + dz * dz) > 0.25;
+                        double pdx = prev == null ? 0 : e.getX() - prev.x;
+                        double pdz = prev == null ? 0 : e.getZ() - prev.z;
+                        boolean moving = (pdx * pdx + pdz * pdz) > 0.25;
                         pf.put("moving", String.valueOf(moving));
                         lastPlayerPos.put(pname, new VecMoving() {{
                             x = e.getX(); z = e.getZ();
                         }});
                         friends.add(pf);
                     } else if (e instanceof ItemEntity) {
-                        if (ds < SENSE_ITEM * SENSE_ITEM) items.add(e.getName().getString());
+                        if (ds < SENSE_ITEM * SENSE_ITEM) {
+                            Map<String, String> ii = new HashMap<>();
+                            ii.put("name", e.getName().getString());
+                            ii.put("x", String.format(Locale.ROOT, "%.2f", e.getX()));
+                            ii.put("y", String.format(Locale.ROOT, "%.2f", e.getY()));
+                            ii.put("z", String.format(Locale.ROOT, "%.2f", e.getZ()));
+                            items.add(ii);
+                        }
                     }
                 }
 
+                // Hora do dia (para o cérebro decidir dormir/peregrinar).
+                long dayTime = client.level.getDayTime() % 24000L;
+                String timeOfDay = dayTime < 11000L ? "day"
+                        : dayTime < 13000L ? "dusk"
+                        : dayTime < 23000L ? "night" : "dawn";
+                String bedJson = MinecraftForFlies.bedPos == null ? "null"
+                        : String.format(Locale.ROOT, "{\"x\":%.1f,\"y\":%.1f,\"z\":%.1f}",
+                                MinecraftForFlies.bedPos.x, MinecraftForFlies.bedPos.y, MinecraftForFlies.bedPos.z);
+
                 json = String.format(Locale.ROOT,
-                        "{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"health\":%.1f,\"hurt\":%b,\"flight_attempt\":%b,\"in_water\":%b,\"blocks\":%s,\"threats\":%s,\"friends\":%s,\"items\":%s,\"thoughts\":\"%s\"}",
+                        "{\"x\":%.2f,\"y\":%.2f,\"z\":%.2f,\"health\":%.1f,\"hurt\":%b,\"flight_attempt\":%b,\"in_water\":%b,\"time_of_day\":\"%s\",\"bed\":%s,\"blocks\":%s,\"threats\":%s,\"friends\":%s,\"items\":%s,\"thoughts\":\"%s\"}",
                         x, y, z, health, hurt, flightAttempt, inWater,
-                        blocksToJson(blockSensoryData), listToJson(threats), friendsToJson(friends), listToJson(items),
+                        timeOfDay, bedJson,
+                        blocksToJson(blockSensoryData), listToJson(threats), friendsToJson(friends), itemsToJson(items),
                         MinecraftForFlies.lastThoughts.replace("\"", "\\\"").replace("\n", " "));
             }
 
@@ -191,8 +209,8 @@ public class MinecraftForFliesClient implements ClientModInitializer {
             for (int i = 0; i < friends.size(); i++) {
                 Map<String, String> f = friends.get(i);
                 sb.append(String.format(Locale.ROOT,
-                        "{\"name\":\"%s\",\"x\":%s,\"y\":%s,\"z\":%s,\"moving\":%s}",
-                        f.get("name"), f.get("x"), f.get("y"), f.get("z"), f.get("moving")));
+                        "{\"name\":\"%s\",\"x\":%s,\"y\":%s,\"z\":%s,\"moving\":%s,\"dist\":%s}",
+                        f.get("name").replace("\"", "\\\""), f.get("x"), f.get("y"), f.get("z"), f.get("moving"), f.get("dist")));
                 if (i < friends.size() - 1) sb.append(",");
             }
             sb.append("]");
@@ -216,6 +234,19 @@ public class MinecraftForFliesClient implements ClientModInitializer {
             for (int i = 0; i < list.size(); i++) {
                 sb.append("\"").append(list.get(i).replace("\"", "\\\"")).append("\"");
                 if (i < list.size() - 1) sb.append(",");
+            }
+            sb.append("]");
+            return sb.toString();
+        }
+
+        private String itemsToJson(List<Map<String, String>> items) {
+            StringBuilder sb = new StringBuilder("[");
+            for (int i = 0; i < items.size(); i++) {
+                Map<String, String> it = items.get(i);
+                sb.append(String.format(Locale.ROOT,
+                        "{\"name\":\"%s\",\"x\":%s,\"y\":%s,\"z\":%s}",
+                        it.get("name").replace("\"", "\\\""), it.get("x"), it.get("y"), it.get("z")));
+                if (i < items.size() - 1) sb.append(",");
             }
             sb.append("]");
             return sb.toString();
