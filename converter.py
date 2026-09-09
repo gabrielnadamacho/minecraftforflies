@@ -109,26 +109,42 @@ def main():
             hurt = state.get('hurt', False)
             flight_attempt = state.get('flight_attempt', False)
             in_water = state.get('in_water', False)
+            time_of_day = str(state.get('time_of_day', 'day'))
+            bed = state.get('bed')
             blocks = [b for b in (state.get('blocks') or []) if isinstance(b, dict)]
             threats = [str(t) for t in (state.get('threats') or []) if t]
             friends_raw = state.get('friends') or []
-            items = [str(i) for i in (state.get('items') or []) if i]
+            items_raw = state.get('items') or []
 
             # --- NORMALIZAÇÃO DOS AMIGOS ---
             # O /state pode vir do mod legado (lista de strings) ou do novo (lista de
-            # dicts). Blindamos para nunca derrubar o loop — a mosca é resiliente.
+            # dicts com x/y/z/moving/dist). Blindamos para nunca derrubar o loop.
             friends = []
             for fr in friends_raw:
                 if isinstance(fr, str):
                     # Mod legado: só temos o nome — assume player parado/presença.
-                    friends.append({'name': fr, 'x': x, 'z': z, 'moving': 'false'})
+                    friends.append({'name': fr, 'x': x, 'z': z, 'moving': False, 'dist': 0.0})
                 else:
                     friends.append({
                         'name': str(fr.get('name', 'player')),
                         'x': float(fr.get('x', x)),
                         'z': float(fr.get('z', z)),
                         'moving': str(fr.get('moving', 'false')).lower() == 'true',
+                        'dist': float(fr.get('dist', 0.0)),
                     })
+
+            # --- NORMALIZAÇÃO DOS ITENS ---
+            # Novo mod: lista de dicts {name,x,y,z}; legado: só nomes (sem posição).
+            items = []
+            for it in items_raw:
+                if isinstance(it, dict):
+                    items.append({
+                        'name': str(it.get('name', 'item')),
+                        'x': float(it.get('x', x)),
+                        'z': float(it.get('z', z)),
+                    })
+                else:
+                    items.append({'name': str(it), 'x': x, 'z': z})
 
             # --- PROCESSAMENTO NEURAL BIOLÓGICO & RUÍDO NEURAL ---
             stimulus = 0.1
