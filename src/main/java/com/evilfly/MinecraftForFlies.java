@@ -50,6 +50,9 @@ public class MinecraftForFlies implements ModInitializer {
 	public static volatile long lastActionAt = 0L;
 	// Após este tempo sem /action, a mosca assume "morte cerebral" e zera o motor.
 	public static final long BRAIN_DEAD_MS = 1500L;
+	// Posição da "cama" da mosca (lar). Usada para dormir à noite (via /state no cérebro)
+	// e para auto-respawn ao morrer. Null = sem lar.
+	public static volatile Vec3 bedPos = null;
 
 	public static final EntityType<DrosophilaEntity> DROSOPHILA = Registry.register(
 			BuiltInRegistries.ENTITY_TYPE, id("drosophila"),
@@ -78,7 +81,9 @@ public class MinecraftForFlies implements ModInitializer {
 				.then(Commands.literal("tp")
 					.then(Commands.argument("pos", Vec3Argument.vec3())
 						.executes(ctx -> teleportFly(ctx.getSource(), Vec3Argument.getVec3(ctx, "pos")))))
-				.then(Commands.literal("info").executes(ctx -> flyInfo(ctx.getSource())))));
+				.then(Commands.literal("info").executes(ctx -> flyInfo(ctx.getSource())))
+				.then(Commands.literal("bed").executes(ctx -> setBed(ctx.getSource())))
+				.then(Commands.literal("bedclear").executes(ctx -> clearBed(ctx.getSource())))));
 	}
 
 	private static int spawnFly(CommandSourceStack source) {
@@ -148,6 +153,22 @@ public class MinecraftForFlies implements ModInitializer {
 					posToString(fly.position()),
 					(int) fly.getHealth(), (int) fly.getMaxHealth())), false);
 		}
+		return 1;
+	}
+
+	/** Define o lar/cama no ponto onde o comando foi executado (posição do jogador). */
+	private static int setBed(CommandSourceStack source) {
+		Vec3 pos = source.getPosition();
+		bedPos = pos;
+		LOGGER.info("[Drosophila] Cama definida em {}", posToString(pos));
+		source.sendSuccess(() -> Component.literal(
+				"Cama da Drosophila definida em " + posToString(pos) + ". Ela dormirá aí à noite e respawnará aqui ao morrer."), true);
+		return 1;
+	}
+
+	private static int clearBed(CommandSourceStack source) {
+		bedPos = null;
+		source.sendSuccess(() -> Component.literal("Cama da Drosophila removida."), true);
 		return 1;
 	}
 

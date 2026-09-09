@@ -2,7 +2,12 @@ package com.evilfly.fly;
 
 import com.evilfly.MinecraftForFlies;
 
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.Mob;
@@ -12,6 +17,7 @@ import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.monster.Monster;
+import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.SwordItem;
 import net.minecraft.world.level.Level;
@@ -184,6 +190,88 @@ public class DrosophilaEntity extends PathfinderMob {
 			MinecraftForFlies.LOGGER.info("[Drosophila] stuck-escape: yawFix={} strafe={} pos=({},{},{})",
 					yawFix, MinecraftForFlies.targetStrafing, this.getX(), this.getY(), this.getZ());
 			this.stuckTicks = 0;
+		}
+	}
+
+	/**
+	 * Interação por right-click para troca de itens (espadas, etc.):
+	 *  - mão vazia  -> pega o item da mosca
+	 *  - mão com item -> dá/troca o item para a mosca (devolve o da mosca ao player)
+	 */
+	@Override
+	public InteractionResult mobInteract(Player player, InteractionHand hand) {
+		if (!this.level().isClientSide) {
+			ItemStack held = player.getItemInHand(hand);
+			ItemStack flyItem = this.getMainHandItem();
+
+			// Mão vazia: retirar o que a mosca segura
+			if (held.isEmpty() && !flyItem.isEmpty()) {
+				player.getInventory().placeItemBackInInventory(flyItem.copy());
+				this.setItemSlot(EquipmentSlot.MAINHAND, ItemStack.EMPTY);
+				MinecraftForFlies.LOGGER.info("[Drosophila] Player pegou {} da mosca",
+						flyItem.getHoverName().getString());
+				return InteractionResult.SUCCESS;
+			}
+			// Mão com item: entregar/trocar (troca a do player pela da mosca)
+			if (!held.isEmpty()) {
+				ItemStack toGive = held.copy();
+				toGive.setCount(1);
+				ItemStack oldFly = flyItem.copy();
+				this.setItemSlot(EquipmentSlot.MAINHAND, toGive);
+				held.shrink(1);
+				if (!oldFly.isEmpty()) {
+					player.getInventory().placeItemBackInInventory(oldFly);
+				}
+				MinecraftForFlies.LOGGER.info("[Drosophila] Troca: {} -> mosca, {} -> player",
+						toGive.getHoverName().getString(),
+						oldFly.isEmpty() ? "(vazio)" : oldFly.getHoverName().getString());
+				return InteractionResult.SUCCESS;
+			}
+		}
+		return super.mobInteract(player, hand);
+	}
+
+	/**
+	 * Auto-respawn na cama: se houver cama definida, a mosca "não morre de vez" —
+	 * revive na cama (com vida cheia) em vez de sumir. Sem Lava/void/dano letal
+	 * efetivo enquanto houver casa.
+	 */
+	@Override
+	public void die(DamageSource damageSource) {
+		if (!this.level().isClientSide && MinecraftForFlies.bedPos != null && this.level() instanceof ServerLevel) {
+			MinecraftForFlies.LOGGER.info("[Drosophila] Morte detectada ({}). Auto-respawn na cama em {}",
+					damageSource.getMsgId(),
+					String.format("%.1f, %.1f, %.1f",
+							MinecraftForFlies.bedPos.x, MinecraftForFlies.bedPos.y, MinecraftForFlies.bedPos.z));
+			this.setHealth(this.getMaxHealth());
+			this.teleportTo(MinecraftForFlies.bedPos.x, MinecraftForFlies.bedPos.y, MinecraftForFlies.bedPos.z);
+			this.setDeltaMovement(Vec3.ZERO);
+			this.hurtTime = 0;
+			this.invulnerableTime = 20; // breve invencibilidade ao reviver
+			return; // não chama super.die() — a mosca "acorda" na cama
+		}
+		super.die(damageSource);
+	}
+
+	/** Persiste a posição da cama no NBT (via static compartilhada). */
+	@Override
+	public void addAdditionalSaveData(CompoundTag tag) {
+		super.addAdditionalSaveData(tag);
+		if (MinecraftForFlies.bedPos != null) {
+			tag.putDouble("bed_x", MinecraftForFlies.bedPos.x);
+			tag.putDouble("bed_y", MinecraftForFlies.bedPos.y);
+			tag.putDouble("bed_z", MinecraftForFlies.bedPos.z);
+		}
+	}
+
+	@Override
+	public void readAdditionalSaveData(CompoundTag tag) {
+		super.readAdditionalSaveData(tag);
+		if (tag.contains("bed_x")) {
+			MinecraftForFlies.bedPos = new Vec3(
+					tag.getDouble("bed_x"), tag.getDouble("bed_y"), tag.getDouble("bed_z"));
+		} else {
+			MinecraftForFlies.bedPos = null;
 		}
 	}
 
