@@ -203,71 +203,96 @@ def main():
                     forward = 1.0
                     attack = True
                 else:
-                    # FIX BIO: anteriormente recuava eternamente (dodge) sem chegar
-                    # ao alcance de 8 blocos para o golpe conectar. Resposta real:
-                    # fecha distância para atacar. Se levar dano, a branch 'hurt'
-                    # (prioridade superior) assume e aplica fuga.
-                    thoughts = f"⚔️ Ameaça ({mob_name}) detectada. Fechando distância para atacar."
+                    # Fecha distância para o golpe conectar (ataque em ~8 blocos).
+                    # Se levar dano, 'hurt' (prioridade acima) assume e foge.
+                    thoughts = f"⚔️ Ameaça ({mob_name}) detectada. Fechando distância para o golpe."
                     action_desc = f"Avançando em {mob_name}"
                     forward = 1.0
                     attack = True
-            elif friends:
-                # friends = [{name,x,y,z,moving}, ...]. A mosca mantém território num
-                # raio de ~150 blocos do player. Se o player ANDA, ela segue; se para,
-                # volta a explorar perto dele.
-                friend = friends[0]
-                friend_name = friend.get('name', 'player')
-                fx = float(friend.get('x', x))
-                fz = float(friend.get('z', z))
-                moving = str(friend.get('moving', 'false')).lower() == 'true'
-                dist = ((fx - x) ** 2 + (fz - z) ** 2) ** 0.5
-
-                if moving:
-                    # Player em movimento: segue, virando na direção dele
-                    thoughts = f"💚 {friend_name} está andando! Acompanhando em {'%.0f' % dist} blocos."
-                    action_desc = f"Segundo o player {friend_name}"
+            elif time_of_day in ("night", "dusk") and isinstance(bed, dict):
+                # Repouso biológico: à noite a mosca busca a cama e "dorme". Se
+                # levar dano, 'hurt' (prioridade acima) foge — nunca morre dormindo
+                # de bobeira. Cama = lar definido por /fly bed.
+                bx = float(bed.get('x', x))
+                bz = float(bed.get('z', z))
+                bed_dist = ((bx - x) ** 2 + (bz - z) ** 2) ** 0.5
+                if bed_dist > 3.0:
+                    thoughts = f"🌙 Anoiteceu. Voltando para a cama em ({bx:.0f},{bz:.0f}) — {'%.0f' % bed_dist} blocos."
+                    action_desc = "Rumo à cama (repouso)"
                     forward = 1.0
-                    # gira em direção ao player (deg, + é horário no Minecraft)
-                    yaw_to = np.degrees(np.arctan2(fx - x, fz - z))
-                    yaw_to = (yaw_to - np.degrees(np.arctan2(0, 1)))  # normaliza rel a norte
-                    yaw_delta = float(((yaw_to % 360) + 360) % 360 - 180) * 0.5
-                elif dist > 150.0:
-                    # Fora do território: volta para perto do player
-                    thoughts = f"🏠 {friend_name} está longe ({'%.0f' % dist} blocos). Retornando ao território."
-                    action_desc = f"Voltando para o território de {friend_name}"
-                    forward = 1.0
-                    yaw_delta = float(((np.degrees(np.arctan2(fx - x, fz - z)) % 360) + 360) % 360 - 180) * 0.5
+                    yaw_delta = float(((np.degrees(np.arctan2(bx - x, bz - z)) % 360) + 360) % 360 - 180) * 0.5
                 else:
-                    # Player parado: explora o território perto dele
-                    thoughts = f"🌍 {friend_name} parado. Explorando o território ao redor."
-                    action_desc = "Explorando território"
-                    forward = 1.0
-                    if np.random.random() < 0.3:
-                        yaw_delta = float(np.random.choice([-35.0, 35.0]))
-            elif items:
-                # Itens soltos = recursos valiosos. Recolher é prioridade biológica
-                # (a mosca equipa arma no main hand e usa contra ameaças).
-                item_name = items[0]
-                thoughts = f"💎 Recurso detectado: {item_name}. Indo recolher para defesa/combate."
-                action_desc = f"Coletando {item_name}"
-                forward = 1.0
+                    thoughts = "😴 Na cama, dormindo até o amanhecer."
+                    action_desc = "Dormindo na cama (repouso)"
+                    forward = 0.0
+                    yaw_delta = 0.0
             else:
-                # Análise dos blocos locais via dados diretos
-                block_names = [b.get('name', 'ar') for b in blocks if b.get('solid') == 'true']
-                sample_block = block_names[0] if block_names else "ar"
+                # --- ESCOLHA DE PLAYER (multi-player) + FOLLOW EM TEMPO REAL ---
+                # Mantém ~5 blocos de um player. Se um player se afasta >15 blocos,
+                # resposta IMEDIATA (sem cadência de 10 passos) para ao menos entrar
+                # no raio de 50. Se vários players, segue o mais perto que está se
+                # movendo; senão o mais perto parado. A distância chega do /state.
+                valid = [f for f in friends if isinstance(f, dict)]
+                target = None
+                if valid:
+                    def _pdist(f):
+                        d = f.get('dist', 0.0)
+                        if d is not None and float(d) > 0.0:
+                            return float(d)
+                        return ((f.get('x', x) - x) ** 2 + (f.get('z', z) - z) ** 2) ** 0.5
+                    moving = [f for f in valid if f.get('moving', False)]
+                    pool = moving if moving else valid
+                    target = min(pool, key=_pdist)
 
-                if brain_activity < 0.4:
-                    thoughts = f"🌿 Caminhando sobre {sample_block} em ({x:.1f}, {y:.1f}, {z:.1f}). Mapeando cheiros e texturas."
-                    action_desc = "Caminhando no solo"
+                if target is not None:
+                    tname = target.get('name', 'player')
+                    tx = float(target.get('x', x))
+                    tz = float(target.get('z', z))
+                    tdist = _pdist(target) if valid else 0.0
+                    yaw_delta = float(((np.degrees(np.arctan2(tx - x, tz - z)) % 360) + 360) % 360 - 180) * 0.5
+                    if tdist > 15.0:
+                        thoughts = f"🚀 {tname} fugiu para {'%.0f' % tdist} blocos! Resposta imediata — reconectando (alvo: raio 50)."
+                        action_desc = f"RESYNC imediato até {tname}"
+                        forward = 1.0
+                    elif tdist > 5.0:
+                        thoughts = f"💚 Seguindo {tname} em {'%.0f' % tdist} blocos (mantendo ~5)."
+                        action_desc = f"Segundo o player {tname}"
+                        forward = 1.0
+                    else:
+                        thoughts = f"🌍 Perto de {tname} ({'%.0f' % tdist} blocos). Vigilância e exploração local."
+                        action_desc = f"Vigilância perto de {tname}"
+                        forward = 0.6
+                        if np.random.random() < 0.3:
+                            yaw_delta = float(np.random.choice([-25.0, 25.0]))
+                elif items:
+                    # Pickup navegado: itens agora vêm com {name,x,y,z}. Escolhe o
+                    # mais próximo e gira até ele; ao chegar perto, o Java
+                    # maybePickupWeapon() aspira a espada (arma) para o main hand.
+                    it = min(items, key=lambda i: ((i.get('x', x) - x) ** 2 + (i.get('z', z) - z) ** 2) ** 0.5)
+                    iname = it.get('name', 'item')
+                    ix = float(it.get('x', x))
+                    iz = float(it.get('z', z))
+                    thoughts = f"💎 Recurso detectado: {iname}. Girando até ele para recolher."
+                    action_desc = f"Coletando {iname}"
                     forward = 1.0
-                    if np.random.random() < 0.25:
-                        # Exploração lateral: desvio orgânico de rota
-                        yaw_delta = float(np.random.choice([-30.0, 30.0]))
+                    yaw_delta = float(((np.degrees(np.arctan2(ix - x, iz - z)) % 360) + 360) % 360 - 180) * 0.5
                 else:
-                    thoughts = f"🔍 Alta atividade sensorial sobre {sample_block}. Girando para inspecionar o ambiente."
-                    action_desc = "Inspecionando o ambiente"
-                    yaw_delta = 35.0
-                    forward = 1.0
+                    # Análise dos blocos locais via dados diretos
+                    block_names = [b.get('name', 'ar') for b in blocks if b.get('solid') == 'true']
+                    sample_block = block_names[0] if block_names else "ar"
+
+                    if brain_activity < 0.4:
+                        thoughts = f"🌿 Caminhando sobre {sample_block} em ({x:.1f}, {y:.1f}, {z:.1f}). Mapeando cheiros e texturas."
+                        action_desc = "Caminhando no solo"
+                        forward = 1.0
+                        if np.random.random() < 0.25:
+                            # Exploração lateral: desvio orgânico de rota
+                            yaw_delta = float(np.random.choice([-30.0, 30.0]))
+                    else:
+                        thoughts = f"🔍 Alta atividade sensorial sobre {sample_block}. Girando para inspecionar o ambiente."
+                        action_desc = "Inspecionando o ambiente"
+                        yaw_delta = 35.0
+                        forward = 1.0
 
             send_action(forward, strafe, jump, attack, yaw_delta, 0.0, thoughts)
 
@@ -277,7 +302,7 @@ def main():
                 print(f"  ⚡ [Ação Motora] {action_desc}")
 
             step_count += 1
-            time.sleep(0.09)
+            time.sleep(0.05)
 
     except KeyboardInterrupt:
         print("\n\n[!] Interrupção manual do experimento.")
